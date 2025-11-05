@@ -1,12 +1,12 @@
 package co.touchlab.kampkit
 
+import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import co.touchlab.kampkit.db.KaMPKitDb
 import co.touchlab.kampkit.vm.BreedViewModel
 import com.copperleaf.ballast.debugger.BallastDebuggerClientConnection
 import com.russhwolf.settings.Settings
 import com.russhwolf.settings.SharedPreferencesSettings
-import com.squareup.sqldelight.android.AndroidSqliteDriver
-import com.squareup.sqldelight.db.SqlDriver
 import io.ktor.client.engine.okhttp.OkHttp
 import org.koin.androidx.viewmodel.dsl.viewModel
 import org.koin.core.module.Module
@@ -17,7 +17,7 @@ actual val platformModule: Module = module {
         AndroidSqliteDriver(
             KaMPKitDb.Schema,
             get(),
-            "KampkitDb"
+            "KampkitDb",
         )
     }
 

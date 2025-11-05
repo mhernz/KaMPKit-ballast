@@ -14,10 +14,10 @@ import com.copperleaf.ballast.debugger.BallastDebuggerInterceptor
 import com.copperleaf.ballast.plusAssign
 import com.copperleaf.ballast.repository.bus.EventBus
 import com.copperleaf.ballast.repository.bus.EventBusImpl
+import kotlin.time.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.datetime.Clock
 import org.koin.core.KoinApplication
 import org.koin.core.context.startKoin
 import org.koin.core.module.Module
@@ -30,7 +30,7 @@ fun initKoin(appModule: Module): KoinApplication {
         modules(
             appModule,
             platformModule,
-            coreModule
+            coreModule,
         )
     }
 
@@ -53,13 +53,13 @@ private val coreModule = module {
         DatabaseHelper(
             get(),
             getWith("DatabaseHelper"),
-            Dispatchers.Default
+            Dispatchers.Default,
         )
     }
     single<DogApi> {
         DogApiImpl(
             getWith("DogApiImpl"),
-            get()
+            get(),
         )
     }
     single<Clock> {
@@ -79,7 +79,9 @@ private val coreModule = module {
             .apply {
                 logger = { tag -> KermitBallastLogger(getWith(tag)) }
                 this += LoggingInterceptor()
-                this += BallastDebuggerInterceptor(get())
+                getOrNull<com.copperleaf.ballast.debugger.BallastDebuggerClientConnection<*>>()?.let { connection ->
+                    this += BallastDebuggerInterceptor(connection)
+                }
             }
     }
     factory<CoroutineScope> {
@@ -99,9 +101,7 @@ private val coreModule = module {
     }
 }
 
-internal inline fun <reified T> Scope.getWith(vararg params: Any?): T {
-    return get(parameters = { parametersOf(*params) })
-}
+internal inline fun <reified T> Scope.getWith(vararg params: Any?): T = get(parameters = { parametersOf(*params) })
 
 expect val platformModule: Module
 

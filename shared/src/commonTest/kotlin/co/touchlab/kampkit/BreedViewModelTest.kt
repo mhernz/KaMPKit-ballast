@@ -12,16 +12,19 @@ import co.touchlab.kampkit.response.BreedResult
 import co.touchlab.kermit.Logger
 import co.touchlab.kermit.StaticConfig
 import com.russhwolf.settings.MapSettings
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.setMain
-import kotlinx.datetime.Clock
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.time.Clock.System
 import kotlin.time.Duration.Companion.hours
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
 
 class BreedViewModelTest {
     private var kermit = Logger(StaticConfig())
@@ -29,28 +32,34 @@ class BreedViewModelTest {
     private var dbHelper = DatabaseHelper(
         testDbConnection,
         kermit,
-        Dispatchers.Default
+        Dispatchers.Default,
     )
     private val settings = MapSettings()
     private val ktorApi = DogApiMock()
 
     // Need to start at non-zero time because the default value for db timestamp is 0
-    private val clock = ClockMock(Clock.System.now())
+    private val clock = ClockMock(System.now())
 
-    private val repository: BreedRepository = BreedRepository(dbHelper, settings, ktorApi, kermit, clock)
-    private val viewModel by lazy { BreedViewModel(repository, kermit) }
+    private val repository: BreedRepository =
+        BreedRepository(dbHelper, settings, ktorApi, kermit, clock)
+
+    @OptIn(DelicateCoroutinesApi::class)
+    private val viewModel by lazy {
+        BreedViewModel(repository, kermit)
+            .also { GlobalScope.launch { it.activate() } }
+    }
 
     companion object {
         private val appenzeller = Breed(1, "appenzeller", false)
         private val australianNoLike = Breed(2, "australian", false)
         private val australianLike = Breed(2, "australian", true)
-        private val breedViewStateSuccessNoFavorite = BreedViewState(
-            breeds = listOf(appenzeller, australianNoLike)
+        private val breedViewStateSuccessNoFavorite = BreedViewState.Content(
+            breeds = listOf(appenzeller, australianNoLike),
         )
-        private val breedViewStateSuccessFavorite = BreedViewState(
-            breeds = listOf(appenzeller, australianLike)
+        private val breedViewStateSuccessFavorite = BreedViewState.Content(
+            breeds = listOf(appenzeller, australianLike),
         )
-        private val breedNames = breedViewStateSuccessNoFavorite.breeds?.map { it.name }.orEmpty()
+        private val breedNames = breedViewStateSuccessNoFavorite.breeds.map { it.name }
     }
 
     @BeforeTest
@@ -71,7 +80,7 @@ class BreedViewModelTest {
         viewModel.breedState.test {
             assertEquals(
                 breedViewStateSuccessNoFavorite,
-                awaitItemPrecededBy(BreedViewState(isLoading = true), BreedViewState(isEmpty = true))
+                awaitItemPrecededBy(BreedViewState.Initial, BreedViewState.Empty()),
             )
         }
     }
@@ -82,42 +91,54 @@ class BreedViewModelTest {
 
         viewModel.breedState.test {
             assertEquals(
-                BreedViewState(isEmpty = true),
-                awaitItemPrecededBy(BreedViewState(isLoading = true))
+                BreedViewState.Empty(),
+                awaitItemPrecededBy(BreedViewState.Initial),
             )
         }
     }
 
     @Test
     fun `Get updated breeds with cache and preserve favorites`() = runTest {
-        settings.putLong(BreedRepository.DB_TIMESTAMP_KEY, clock.currentInstant.toEpochMilliseconds())
+        settings.putLong(
+            BreedRepository.DB_TIMESTAMP_KEY,
+            clock.currentInstant.toEpochMilliseconds(),
+        )
 
         val successResult = ktorApi.successResult()
-        val resultWithExtraBreed = successResult.copy(message = successResult.message + ("extra" to emptyList()))
+        val resultWithExtraBreed = successResult.copy(
+            message = successResult.message + ("extra" to emptyList()),
+        )
         ktorApi.prepareResult(resultWithExtraBreed)
 
         dbHelper.insertBreeds(breedNames)
         dbHelper.updateFavorite(australianLike.id, true)
 
         viewModel.breedState.test {
-            assertEquals(breedViewStateSuccessFavorite, awaitItemPrecededBy(BreedViewState(isLoading = true)))
+            assertEquals(breedViewStateSuccessFavorite, awaitItemPrecededBy(BreedViewState.Initial))
             expectNoEvents()
 
-            viewModel.refreshBreeds().join()
+            viewModel.refreshBreeds()
             // id is 5 here because it incremented twice when trying to insert duplicate breeds
             assertEquals(
-                BreedViewState(breedViewStateSuccessFavorite.breeds?.plus(Breed(5, "extra", false))),
-                awaitItemPrecededBy(breedViewStateSuccessFavorite.copy(isLoading = true))
+                BreedViewState.Content(
+                    breedViewStateSuccessFavorite.breeds + Breed(5, "extra", false),
+                ),
+                awaitItemPrecededBy(breedViewStateSuccessFavorite.copy(isLoading = true)),
             )
         }
     }
 
     @Test
     fun `Get updated breeds when stale and preserve favorites`() = runTest {
-        settings.putLong(BreedRepository.DB_TIMESTAMP_KEY, (clock.currentInstant - 2.hours).toEpochMilliseconds())
+        settings.putLong(
+            BreedRepository.DB_TIMESTAMP_KEY,
+            (clock.currentInstant - 2.hours).toEpochMilliseconds(),
+        )
 
         val successResult = ktorApi.successResult()
-        val resultWithExtraBreed = successResult.copy(message = successResult.message + ("extra" to emptyList()))
+        val resultWithExtraBreed = successResult.copy(
+            message = successResult.message + ("extra" to emptyList()),
+        )
         ktorApi.prepareResult(resultWithExtraBreed)
 
         dbHelper.insertBreeds(breedNames)
@@ -126,46 +147,57 @@ class BreedViewModelTest {
         viewModel.breedState.test {
             // id is 5 here because it incremented twice when trying to insert duplicate breeds
             assertEquals(
-                BreedViewState(breedViewStateSuccessFavorite.breeds?.plus(Breed(5, "extra", false))),
-                awaitItemPrecededBy(BreedViewState(isLoading = true), breedViewStateSuccessFavorite)
+                BreedViewState.Content(
+                    breedViewStateSuccessFavorite.breeds + Breed(5, "extra", false),
+                ),
+                awaitItemPrecededBy(BreedViewState.Initial, breedViewStateSuccessFavorite),
             )
         }
     }
 
     @Test
     fun `Toggle favorite cached breed`() = runTest {
-        settings.putLong(BreedRepository.DB_TIMESTAMP_KEY, clock.currentInstant.toEpochMilliseconds())
+        settings.putLong(
+            BreedRepository.DB_TIMESTAMP_KEY,
+            clock.currentInstant.toEpochMilliseconds(),
+        )
 
         dbHelper.insertBreeds(breedNames)
         dbHelper.updateFavorite(australianLike.id, true)
 
         viewModel.breedState.test {
-            assertEquals(breedViewStateSuccessFavorite, awaitItemPrecededBy(BreedViewState(isLoading = true)))
+            assertEquals(breedViewStateSuccessFavorite, awaitItemPrecededBy(BreedViewState.Initial))
             expectNoEvents()
 
-            viewModel.updateBreedFavorite(australianLike).join()
+            viewModel.updateBreedFavorite(australianLike)
             assertEquals(
                 breedViewStateSuccessNoFavorite,
-                awaitItemPrecededBy(breedViewStateSuccessFavorite.copy(isLoading = true))
+                awaitItemPrecededBy(breedViewStateSuccessFavorite.copy(isLoading = true)),
             )
         }
     }
 
     @Test
     fun `No web call if data is not stale`() = runTest {
-        settings.putLong(BreedRepository.DB_TIMESTAMP_KEY, clock.currentInstant.toEpochMilliseconds())
+        settings.putLong(
+            BreedRepository.DB_TIMESTAMP_KEY,
+            clock.currentInstant.toEpochMilliseconds(),
+        )
         ktorApi.prepareResult(ktorApi.successResult())
         dbHelper.insertBreeds(breedNames)
 
         viewModel.breedState.test {
-            assertEquals(breedViewStateSuccessNoFavorite, awaitItemPrecededBy(BreedViewState(isLoading = true)))
+            assertEquals(
+                breedViewStateSuccessNoFavorite,
+                awaitItemPrecededBy(BreedViewState.Initial),
+            )
             assertEquals(0, ktorApi.calledCount)
             expectNoEvents()
 
-            viewModel.refreshBreeds().join()
+            viewModel.refreshBreeds()
             assertEquals(
                 breedViewStateSuccessNoFavorite,
-                awaitItemPrecededBy(breedViewStateSuccessNoFavorite.copy(isLoading = true))
+                awaitItemPrecededBy(breedViewStateSuccessNoFavorite.copy(isLoading = true)),
             )
             assertEquals(1, ktorApi.calledCount)
         }
@@ -177,8 +209,8 @@ class BreedViewModelTest {
 
         viewModel.breedState.test {
             assertEquals(
-                BreedViewState(error = "Unable to download breed list"),
-                awaitItemPrecededBy(BreedViewState(isLoading = true), BreedViewState(isEmpty = true))
+                BreedViewState.Error(error = "Unable to download breed list"),
+                awaitItemPrecededBy(BreedViewState.Initial, BreedViewState.Empty()),
             )
         }
     }
@@ -186,22 +218,25 @@ class BreedViewModelTest {
     @Test
     fun `Ignore API error with cache`() = runTest {
         dbHelper.insertBreeds(breedNames)
-        settings.putLong(BreedRepository.DB_TIMESTAMP_KEY, (clock.currentInstant - 2.hours).toEpochMilliseconds())
+        settings.putLong(
+            BreedRepository.DB_TIMESTAMP_KEY,
+            (clock.currentInstant - 2.hours).toEpochMilliseconds(),
+        )
         ktorApi.throwOnCall(RuntimeException("Test error"))
 
         viewModel.breedState.test {
             assertEquals(
                 breedViewStateSuccessNoFavorite,
-                awaitItemPrecededBy(BreedViewState(isLoading = true))
+                awaitItemPrecededBy(BreedViewState.Initial),
             )
             expectNoEvents()
 
             ktorApi.prepareResult(ktorApi.successResult())
-            viewModel.refreshBreeds().join()
+            viewModel.refreshBreeds()
 
             assertEquals(
                 breedViewStateSuccessNoFavorite,
-                awaitItemPrecededBy(breedViewStateSuccessNoFavorite.copy(isLoading = true))
+                awaitItemPrecededBy(breedViewStateSuccessNoFavorite.copy(isLoading = true)),
             )
         }
     }
@@ -213,33 +248,36 @@ class BreedViewModelTest {
         viewModel.breedState.test {
             assertEquals(
                 breedViewStateSuccessNoFavorite,
-                awaitItemPrecededBy(BreedViewState(isLoading = true), BreedViewState(isEmpty = true))
+                awaitItemPrecededBy(BreedViewState.Initial, BreedViewState.Empty()),
             )
             expectNoEvents()
 
             ktorApi.throwOnCall(RuntimeException("Test error"))
-            viewModel.refreshBreeds().join()
+            viewModel.refreshBreeds()
 
             assertEquals(
                 breedViewStateSuccessNoFavorite,
-                awaitItemPrecededBy(breedViewStateSuccessNoFavorite.copy(isLoading = true))
+                awaitItemPrecededBy(breedViewStateSuccessNoFavorite.copy(isLoading = true)),
             )
         }
     }
 
     @Test
     fun `Show API error on refresh without cache`() = runTest {
-        settings.putLong(BreedRepository.DB_TIMESTAMP_KEY, clock.currentInstant.toEpochMilliseconds())
+        settings.putLong(
+            BreedRepository.DB_TIMESTAMP_KEY,
+            clock.currentInstant.toEpochMilliseconds(),
+        )
         ktorApi.throwOnCall(RuntimeException("Test error"))
 
         viewModel.breedState.test {
-            assertEquals(BreedViewState(isEmpty = true), awaitItemPrecededBy(BreedViewState(isLoading = true)))
+            assertEquals(BreedViewState.Empty(), awaitItemPrecededBy(BreedViewState.Initial))
             expectNoEvents()
 
-            viewModel.refreshBreeds().join()
+            viewModel.refreshBreeds()
             assertEquals(
-                BreedViewState(error = "Unable to refresh breed list"),
-                awaitItemPrecededBy(BreedViewState(isEmpty = true, isLoading = true))
+                BreedViewState.Error(error = "Unable to refresh breed list"),
+                awaitItemPrecededBy(BreedViewState.Empty(isLoading = true)),
             )
         }
     }

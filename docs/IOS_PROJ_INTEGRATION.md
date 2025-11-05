@@ -35,9 +35,11 @@ cocoapods {
     homepage = "https://github.com/touchlab/KaMPKit"
     framework {
         isStatic = false
-        export(Deps.kermit)
-        transitiveExport = true
+        linkerOpts("-lsqlite3")
+        export(libs.touchlab.kermit.simple)       
     }
+    extraSpecAttributes["swift_version"] = "\"5.0\"" // <- SKIE Needs this!
+    podfile = project.file("../ios/Podfile")
 }
 ```
 Note that you need to apply the `native.cocoapods` plugin.
@@ -49,7 +51,7 @@ on Arm64 based simulators, so use `isStatic = true` if you need to use a Arm64 s
 settings allow configuring and logging with Kermit in swift. Normally dependencies of your shared
 module aren't included in the export.
 
-To generate the podspec, run the `podspec` command, or `./gradlew podspec`. This wil generate the
+To generate the podspec, run the `podspec` command, or `./gradlew podspec`. This will generate the
 podspec in the root library folder.
 
 For more detailed information about the
@@ -66,7 +68,7 @@ following into your new `Podfile`:
  ```
 use_frameworks!
 
-platform :ios, '12.4'
+platform :ios, '15.0'
 
 install! 'cocoapods', :deterministic_uuids => false
 

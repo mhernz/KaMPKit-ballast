@@ -1,12 +1,13 @@
 package co.touchlab.kampkit.vm
 
 import co.touchlab.kampkit.db.Breed
+import co.touchlab.skie.configuration.annotations.DefaultArgumentInterop
 import com.copperleaf.ballast.repository.cache.Cached
 import com.copperleaf.ballast.repository.cache.getCachedOrEmptyList
 import com.copperleaf.ballast.repository.cache.isLoading
 
 object BreedContract {
-    data class State(
+    data class State @DefaultArgumentInterop.Enabled constructor(
         val breeds: Cached<List<Breed>> = Cached.NotLoaded(),
     ) {
         val error: String? = null

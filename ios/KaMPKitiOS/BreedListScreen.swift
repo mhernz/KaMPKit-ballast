@@ -6,29 +6,38 @@
 //  Copyright © 2021 Touchlab. All rights reserved.
 //
 
-import Combine
 import SwiftUI
 import shared
 
-private let log = koin.loggerWithTag(tag: "ViewController")
+private let log = koin.loggerWithTag(tag: "BreedListScreen")
 
 struct BreedListScreen: View {
-    @ObservedObject
-    var observableModel = BallastObservable<
-        BreedContract.Inputs,
-        BreedContract.Events,
-        BreedContract.State>(
-            viewModelFactory: KotlinDependencies.shared.getBreedViewModel,
-            eventHandlerFactory: nil
-        )
+
+    @State
+    var viewModel: BreedViewModel?
+
+    @State
+    var vmState: BreedContract.State = BreedContract.State()
 
     var body: some View {
         BreedListContent(
-            vmState: observableModel.vmState,
-            postInput: observableModel.postInput
+            vmState: vmState,
+            postInput: { input in
+                viewModel?.trySend(element: input)
+            }
         )
-        .withViewModel(observableModel) {
-            observableModel.postInput(BreedContract.InputsRefreshBreeds(forceRefresh: false))
+        .task {
+            let viewModel = KotlinDependencies.shared.getBreedViewModel()
+            self.viewModel = viewModel
+            viewModel.trySend(element: BreedContract.InputsRefreshBreeds(forceRefresh: false))
+            
+            for await state in viewModel.observeStates() {
+                self.vmState = state
+            }
+        }
+        .onDisappear {
+            viewModel?.close()
+            self.viewModel = nil
         }
     }
 }
@@ -40,7 +49,8 @@ struct BreedListContent: View {
     var body: some View {
         ZStack {
             VStack {
-                if let breeds = vmState.breedsList {
+                let breeds = vmState.breedsList
+                if !breeds.isEmpty {
                     List(breeds, id: \.id) { breed in
                         BreedRowView(breed: breed) {
                             postInput(BreedContract.InputsUpdateBreedFavorite(breed: breed))
@@ -50,7 +60,9 @@ struct BreedListContent: View {
                 if let error = vmState.error {
                     Text(error)
                         .foregroundColor(.red)
+                    Spacer()
                 }
+
                 Button("Refresh") {
                     postInput(BreedContract.InputsRefreshBreeds(forceRefresh: true))
                 }
@@ -80,14 +92,7 @@ struct BreedRowView: View {
 struct BreedListScreen_Previews: PreviewProvider {
     static var previews: some View {
         BreedListContent(
-            vmState: BreedContract.State(
-                breeds: CachedValue(
-                    value: [
-                        Breed(id: 0, name: "appenzeller", favorite: false),
-                        Breed(id: 1, name: "australian", favorite: true)
-                    ]
-                )
-            ),
+            vmState: BreedContract.State(),
             postInput: { input in }
         )
     }

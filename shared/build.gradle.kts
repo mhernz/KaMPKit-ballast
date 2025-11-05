@@ -1,20 +1,21 @@
-
+import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
+import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSetTree
 
 plugins {
-    kotlin("multiplatform")
-    kotlin("native.cocoapods")
-    kotlin("plugin.serialization")
-    id("com.android.library")
-    id("com.squareup.sqldelight")
+    alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.android.library)
+    alias(libs.plugins.sqlDelight)
+    alias(libs.plugins.skie)
 }
 
 android {
+    namespace = "co.touchlab.kampkit"
     compileSdk = libs.versions.compileSdk.get().toInt()
     defaultConfig {
         minSdk = libs.versions.minSdk.get().toInt()
-        targetSdk = libs.versions.targetSdk.get().toInt()
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+    @Suppress("UnstableApiUsage")
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
@@ -30,89 +31,75 @@ android {
 version = "1.2"
 
 kotlin {
-    android()
-    ios()
-    // Note: iosSimulatorArm64 target requires that all dependencies have M1 support
-    iosSimulatorArm64()
+    jvmToolchain(11)
+    // https://kotlinlang.org/docs/multiplatform-expect-actual.html#expected-and-actual-classes
+    // To suppress this warning about usage of expected and actual classes
+    @OptIn(ExperimentalKotlinGradlePluginApi::class)
+    compilerOptions {
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
+    androidTarget {
+        @Suppress("OPT_IN_USAGE")
+        unitTestVariant.sourceSetTree.set(KotlinSourceSetTree.test)
+    }
+    listOf(
+        iosX64(),
+        iosArm64(),
+        iosSimulatorArm64(),
+    ).forEach {
+        it.binaries.framework {
+            isStatic = false
+            linkerOpts("-lsqlite3")
+            export(libs.touchlab.kermit.simple)
+        }
+    }
 
     sourceSets {
         all {
             languageSettings.apply {
                 optIn("kotlin.RequiresOptIn")
                 optIn("kotlinx.coroutines.ExperimentalCoroutinesApi")
+                optIn("kotlin.time.ExperimentalTime")
             }
         }
 
-        val commonMain by getting {
-            dependencies {
-                implementation(libs.koin.core)
-                implementation(libs.coroutines.core)
-                implementation(libs.sqlDelight.coroutinesExt)
-                implementation(libs.bundles.ktor.common)
-                implementation(libs.touchlab.stately)
-                implementation(libs.multiplatformSettings.common)
-                implementation(libs.kotlinx.dateTime)
-                api(libs.touchlab.kermit)
-                api(libs.ballast.core)
-                api(libs.ballast.repository)
-                implementation(libs.ballast.debugger)
-                implementation(libs.ballast.savedstate)
-            }
+        commonMain.dependencies {
+            implementation(libs.koin.core)
+            implementation(libs.coroutines.core)
+            implementation(libs.sqlDelight.coroutinesExt)
+            implementation(libs.bundles.ktor.common)
+            implementation(libs.multiplatformSettings.common)
+            implementation(libs.kotlinx.dateTime)
+            implementation(libs.touchlab.skie.annotations)
+            api(libs.touchlab.kermit)
+            api(libs.ballast.core)
+            api(libs.ballast.repository)
+            implementation(libs.ballast.debugger)
+            implementation(libs.ballast.savedstate)
         }
-        val commonTest by getting {
-            dependencies {
-                implementation(libs.bundles.shared.commonTest)
-            }
+        commonTest.dependencies {
+            implementation(libs.bundles.shared.commonTest)
         }
-        val androidMain by getting {
-            dependencies {
-                implementation(libs.androidx.lifecycle.viewmodel)
-                implementation(libs.sqlDelight.android)
-                implementation(libs.ktor.client.okHttp)
-                api(libs.koin.android)
-                implementation(libs.ballast.debugger)
-            }
+        androidMain.dependencies {
+            implementation(libs.androidx.lifecycle.viewmodel)
+            implementation(libs.sqlDelight.android)
+            implementation(libs.ktor.client.okHttp)
+            implementation(libs.ballast.debugger)
+            implementation(libs.koin.android)
         }
-        val androidTest by getting {
-            dependencies {
-                implementation(libs.bundles.shared.androidTest)
-            }
+        getByName("androidUnitTest").dependencies {
+            implementation(libs.bundles.shared.androidTest)
         }
-        val iosMain by getting {
-            dependencies {
-                implementation(libs.sqlDelight.native)
-                implementation(libs.ktor.client.ios)
-            }
+        iosMain.dependencies {
+            implementation(libs.sqlDelight.native)
+            implementation(libs.ktor.client.ios)
+            api(libs.touchlab.kermit.simple)
         }
-        val iosTest by getting
-        val iosSimulatorArm64Main by getting {
-            dependsOn(iosMain)
-        }
-        val iosSimulatorArm64Test by getting {
-            dependsOn(iosTest)
-        }
-    }
-
-    sourceSets.matching { it.name.endsWith("Test") }
-        .configureEach {
-            languageSettings.optIn("kotlin.time.ExperimentalTime")
-        }
-
-    cocoapods {
-        summary = "Common library for the KaMP starter kit"
-        homepage = "https://github.com/touchlab/KaMPKit"
-        framework {
-            isStatic = false // SwiftUI preview requires dynamic framework
-            export(libs.ballast.core)
-            export(libs.ballast.repository)
-        }
-        ios.deploymentTarget = "12.4"
-        podfile = project.file("../ios/Podfile")
     }
 }
 
 sqldelight {
-    database("KaMPKitDb") {
-        packageName = "co.touchlab.kampkit.db"
+    databases.create("KaMPKitDb") {
+        packageName.set("co.touchlab.kampkit.db")
     }
 }
